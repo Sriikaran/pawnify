@@ -7,6 +7,8 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { debugLog } from "@/lib/debug";
 import { deriveLoanDisplayStatus } from "./loans";
+import { computeAccruedInterest } from "./interest";
+import { classifyFlow } from "./day-book";
 
 const Decimal = Prisma.Decimal;
 
@@ -42,89 +44,7 @@ export async function getDashboardStats(filter?: DashboardFilter) {
     }
   }
 
-  // Authoritative query for all active loans (point-in-time)
-  const activeLoans = await prisma.loan.findMany({
-    where: { status: "ACTIVE" },
-    select: {
-      id: true,
-      loanNumber: true,
-      principalOutstanding: true,
-      principalAmount: true,
-      dueDate: true,
-      gracePeriodDays: true,
-      status: true,
-      ltvPercent: true,
-      interestRateMonthly: true,
-      lastSettledDate: true,
-    },
-  });
-
-  let activeCount = 0;
-  let overdueCount = 0;
-  let totalAUM = new Decimal(0);
-  let overdueAmount = new Decimal(0);
-  let dueIn7Days = 0;
-  let dueIn30Days = 0;
-  let totalLtv = new Decimal(0);
-  let weeklyInterestAccrued = new Decimal(0);
-  let totalAccruedInterest = new Decimal(0);
-
-  const { computeAccruedInterest } = await import("./interest");
-
-  for (const loan of activeLoans) {
-    const displayStatus = deriveLoanDisplayStatus(loan);
-    totalAUM = totalAUM.plus(loan.principalOutstanding);
-    if (loan.ltvPercent) {
-      totalLtv = totalLtv.plus(loan.ltvPercent);
-    }
-    if (loan.interestRateMonthly) {
-      const monthlyInterest = loan.principalOutstanding.mul(loan.interestRateMonthly).div(100);
-      weeklyInterestAccrued = weeklyInterestAccrued.plus(monthlyInterest.div(4.33));
-    }
-
-    // Authoritative Actual/365 interest engine calculation
-    const accrued = computeAccruedInterest(
-      {
-        principalOutstanding: loan.principalOutstanding,
-        interestRateMonthly: loan.interestRateMonthly,
-        lastSettledDate: loan.lastSettledDate,
-      },
-      now
-    );
-    totalAccruedInterest = totalAccruedInterest.plus(accrued);
-
-    if (displayStatus === "OVERDUE") {
-      overdueCount++;
-      overdueAmount = overdueAmount.plus(loan.principalOutstanding);
-    } else {
-      activeCount++;
-    }
-
-    if (loan.dueDate >= today && loan.dueDate <= in7Days) {
-      dueIn7Days++;
-    }
-    if (loan.dueDate >= today && loan.dueDate <= in30Days) {
-      dueIn30Days++;
-    }
-  }
-
-  // Lifetime counts & aggregates
-  const [totalLoansCount, closedCount, customerCount, totalDisbursedLifetime] = await Promise.all([
-    prisma.loan.count(),
-    prisma.loan.count({ where: { status: "CLOSED" } }),
-    prisma.customer.count(),
-    prisma.loan.aggregate({
-      _sum: { principalAmount: true },
-    }),
-  ]);
-
-  // Point-in-time closed loan principal sum
-  const closedLoansAgg = await prisma.loan.aggregate({
-    where: { status: "CLOSED" },
-    _sum: { principalAmount: true },
-  });
-
-  // Disbursement metrics: Today, Week, and Period
+  // Disbursement metrics filter
   const disbursementWhere: Prisma.LoanWhereInput = {};
   if (periodStart && periodEnd) {
     disbursementWhere.loanDate = { gte: periodStart, lte: periodEnd };
@@ -134,7 +54,75 @@ export async function getDashboardStats(filter?: DashboardFilter) {
     disbursementWhere.loanDate = { lte: periodEnd };
   }
 
-  const [disbursedToday, disbursedWeek, disbursedPeriod] = await Promise.all([
+  // Payment metrics filter
+  const paymentWhere: Prisma.PaymentWhereInput = {};
+  if (periodStart && periodEnd) {
+    paymentWhere.paymentDate = { gte: periodStart, lte: periodEnd };
+  } else if (periodStart) {
+    paymentWhere.paymentDate = { gte: periodStart };
+  } else if (periodEnd) {
+    paymentWhere.paymentDate = { lte: periodEnd };
+  }
+
+  // Recent ledger entries filter
+  const recentLedgerWhere: Prisma.LedgerEntryWhereInput = {};
+  if (periodStart && periodEnd) {
+    recentLedgerWhere.createdAt = { gte: periodStart, lte: periodEnd };
+  } else if (periodStart) {
+    recentLedgerWhere.createdAt = { gte: periodStart };
+  } else if (periodEnd) {
+    recentLedgerWhere.createdAt = { lte: periodEnd };
+  }
+
+  // Parallelize all independent DB reads concurrently (reduces sequential round-trip blocking)
+  const [
+    activeLoans,
+    totalLoansCount,
+    closedCount,
+    customerCount,
+    totalDisbursedLifetime,
+    closedLoansAgg,
+    disbursedToday,
+    disbursedWeek,
+    disbursedPeriod,
+    collectionsToday,
+    collectionsPeriod,
+    recentLoans,
+    pendingFollowUpsCount,
+    recentLedgerEntries,
+    capitalSetting,
+  ] = await Promise.all([
+    prisma.loan.findMany({
+      where: { status: "ACTIVE" },
+      select: {
+        id: true,
+        loanNumber: true,
+        principalOutstanding: true,
+        principalAmount: true,
+        dueDate: true,
+        gracePeriodDays: true,
+        status: true,
+        ltvPercent: true,
+        interestRateMonthly: true,
+        lastSettledDate: true,
+        interestType: true,
+        interestFrequency: true,
+        cumulativePeriodMonths: true,
+        interestTreatment: true,
+        interestOutstanding: true,
+        lastCapitalizedAt: true,
+      },
+    }),
+    prisma.loan.count(),
+    prisma.loan.count({ where: { status: "CLOSED" } }),
+    prisma.customer.count(),
+    prisma.loan.aggregate({
+      _sum: { principalAmount: true },
+    }),
+    prisma.loan.aggregate({
+      where: { status: "CLOSED" },
+      _sum: { principalAmount: true },
+    }),
     prisma.loan.aggregate({
       where: { loanDate: { gte: today, lte: todayEnd } },
       _sum: { principalAmount: true },
@@ -150,19 +138,6 @@ export async function getDashboardStats(filter?: DashboardFilter) {
       _sum: { principalAmount: true },
       _count: true,
     }),
-  ]);
-
-  // Payment metrics: Today and Period
-  const paymentWhere: Prisma.PaymentWhereInput = {};
-  if (periodStart && periodEnd) {
-    paymentWhere.paymentDate = { gte: periodStart, lte: periodEnd };
-  } else if (periodStart) {
-    paymentWhere.paymentDate = { gte: periodStart };
-  } else if (periodEnd) {
-    paymentWhere.paymentDate = { lte: periodEnd };
-  }
-
-  const [collectionsToday, collectionsPeriod] = await Promise.all([
     prisma.payment.aggregate({
       where: { paymentDate: { gte: today, lte: todayEnd } },
       _sum: {
@@ -183,18 +158,94 @@ export async function getDashboardStats(filter?: DashboardFilter) {
       },
       _count: true,
     }),
+    prisma.loan.findMany({
+      take: 5,
+      orderBy: { createdAt: "desc" },
+      include: {
+        customer: { select: { fullName: true, phone: true } },
+      },
+    }),
+    prisma.followUp.count({
+      where: {
+        status: "PENDING",
+        dueDate: { gte: today, lte: in7Days },
+      },
+    }),
+    prisma.ledgerEntry.findMany({
+      where: Object.keys(recentLedgerWhere).length > 0 ? recentLedgerWhere : undefined,
+      take: 10,
+      orderBy: { createdAt: "desc" },
+      include: {
+        loan: {
+          select: {
+            loanNumber: true,
+            customer: { select: { id: true, fullName: true, phone: true } },
+          },
+        },
+        account: {
+          select: { id: true, code: true, name: true, type: true },
+        },
+      },
+    }),
+    prisma.appSetting.findUnique({
+      where: { key: "capital.main" },
+    }),
   ]);
 
-  // Recent loans
-  const recentLoans = await prisma.loan.findMany({
-    take: 5,
-    orderBy: { createdAt: "desc" },
-    include: {
-      customer: { select: { fullName: true, phone: true } },
-    },
-  });
+  let activeCount = 0;
+  let overdueCount = 0;
+  let totalAUM = new Decimal(0);
+  let overdueAmount = new Decimal(0);
+  let dueIn7Days = 0;
+  let dueIn30Days = 0;
+  let totalLtv = new Decimal(0);
+  let weeklyInterestAccrued = new Decimal(0);
+  let totalAccruedInterest = new Decimal(0);
 
-  // Overdue loans
+  for (const loan of activeLoans) {
+    const displayStatus = deriveLoanDisplayStatus(loan);
+    totalAUM = totalAUM.plus(loan.principalOutstanding);
+    if (loan.ltvPercent) {
+      totalLtv = totalLtv.plus(loan.ltvPercent);
+    }
+    if (loan.interestRateMonthly) {
+      const monthlyInterest = loan.principalOutstanding.mul(loan.interestRateMonthly).div(100);
+      weeklyInterestAccrued = weeklyInterestAccrued.plus(monthlyInterest.div(4.33));
+    }
+
+    // Authoritative interest engine calculation (Standard & Cumulative)
+    const accrued = computeAccruedInterest(
+      {
+        principalOutstanding: loan.principalOutstanding,
+        interestRateMonthly: loan.interestRateMonthly,
+        lastSettledDate: loan.lastSettledDate,
+        interestType: loan.interestType,
+        interestFrequency: loan.interestFrequency,
+        cumulativePeriodMonths: loan.cumulativePeriodMonths,
+        interestTreatment: loan.interestTreatment,
+        interestOutstanding: loan.interestOutstanding,
+        lastCapitalizedAt: loan.lastCapitalizedAt,
+      },
+      now
+    );
+    totalAccruedInterest = totalAccruedInterest.plus(accrued);
+
+    if (displayStatus === "OVERDUE") {
+      overdueCount++;
+      overdueAmount = overdueAmount.plus(loan.principalOutstanding);
+    } else {
+      activeCount++;
+    }
+
+    if (loan.dueDate >= today && loan.dueDate <= in7Days) {
+      dueIn7Days++;
+    }
+    if (loan.dueDate >= today && loan.dueDate <= in30Days) {
+      dueIn30Days++;
+    }
+  }
+
+  // Overdue loans detailed (if any overdue loans exist)
   const overdueLoans = activeLoans
     .filter((l) => deriveLoanDisplayStatus(l) === "OVERDUE")
     .slice(0, 10);
@@ -210,42 +261,7 @@ export async function getDashboardStats(filter?: DashboardFilter) {
         })
       : [];
 
-  const pendingFollowUpsCount = await prisma.followUp.count({
-    where: {
-      status: "PENDING",
-      dueDate: { gte: today, lte: in7Days },
-    },
-  });
-
   const avgLtv = activeCount > 0 ? totalLtv.div(activeCount).toFixed(1) : "0";
-
-  // Recent activity from single-entry LedgerEntry table
-  const { classifyFlow } = await import("./day-book");
-  const recentLedgerWhere: Prisma.LedgerEntryWhereInput = {};
-  if (periodStart && periodEnd) {
-    recentLedgerWhere.createdAt = { gte: periodStart, lte: periodEnd };
-  } else if (periodStart) {
-    recentLedgerWhere.createdAt = { gte: periodStart };
-  } else if (periodEnd) {
-    recentLedgerWhere.createdAt = { lte: periodEnd };
-  }
-
-  const recentLedgerEntries = await prisma.ledgerEntry.findMany({
-    where: Object.keys(recentLedgerWhere).length > 0 ? recentLedgerWhere : undefined,
-    take: 10,
-    orderBy: { createdAt: "desc" },
-    include: {
-      loan: {
-        select: {
-          loanNumber: true,
-          customer: { select: { id: true, fullName: true, phone: true } },
-        },
-      },
-      account: {
-        select: { id: true, code: true, name: true, type: true },
-      },
-    },
-  });
 
   const recentActivity = recentLedgerEntries.map((e) => ({
     id: e.id,
@@ -267,6 +283,11 @@ export async function getDashboardStats(filter?: DashboardFilter) {
   // Operational section summaries
   const totalPrincipalOutstanding = totalAUM;
   const totalExposure = totalPrincipalOutstanding.plus(totalAccruedInterest);
+
+  const capitalMain = capitalSetting?.value
+    ? new Decimal(capitalSetting.value)
+    : new Decimal("5000000");
+  const availableCapital = Decimal.max(new Decimal(0), capitalMain.minus(totalPrincipalOutstanding));
 
   const loanStatusSummary = {
     active: { count: activeCount, amount: totalAUM.minus(overdueAmount) },
@@ -318,6 +339,8 @@ export async function getDashboardStats(filter?: DashboardFilter) {
     closedCount,
     totalAUM: totalAUM.toString(),
     totalPrincipalOutstanding,
+    capitalMain,
+    availableCapital,
     totalAccruedInterest,
     totalExposure,
     overdueAmount: overdueAmount.toString(),
@@ -385,12 +408,31 @@ export async function getDashboardStats(filter?: DashboardFilter) {
 }
 
 export async function getDashboardChartData() {
-  const allLoans = await prisma.loan.findMany({
-    include: {
-      items: { select: { metalType: true, assessedValue: true } },
-    },
-  });
-  const allPayments = await prisma.payment.findMany();
+  const now = new Date();
+  const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+
+  const [allLoans, recentPayments] = await Promise.all([
+    prisma.loan.findMany({
+      select: {
+        loanDate: true,
+        principalAmount: true,
+        principalOutstanding: true,
+        status: true,
+        dueDate: true,
+        gracePeriodDays: true,
+        items: { select: { metalType: true, assessedValue: true } },
+      },
+    }),
+    prisma.payment.findMany({
+      where: {
+        paymentDate: { gte: sixMonthsAgo },
+      },
+      select: {
+        paymentDate: true,
+        amountPaid: true,
+      },
+    }),
+  ]);
 
   // 1. Metal Breakdown
   let goldCount = 0;
@@ -434,7 +476,6 @@ export async function getDashboardChartData() {
 
   // 3. Monthly Disbursed vs Collected (Last 6 Months)
   const monthlyData: Record<string, { month: string; disbursed: number; collected: number }> = {};
-  const now = new Date();
   const months = [
     "Jan",
     "Feb",
@@ -464,7 +505,7 @@ export async function getDashboardChartData() {
     }
   }
 
-  for (const pay of allPayments) {
+  for (const pay of recentPayments) {
     const d = new Date(pay.paymentDate);
     const key = `${months[d.getMonth()]} ${d.getFullYear().toString().slice(2)}`;
     if (monthlyData[key]) {

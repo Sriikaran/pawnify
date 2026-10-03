@@ -372,23 +372,16 @@ describe("4. Day Book Query Service & Filtering (Steps 1, 2, 3)", () => {
 // ==================== 5. Historical Data Safety ====================
 
 describe("5. Historical Data Safety (Step 14)", () => {
-  it("all 29 historical rows with accountId = null remain intact", async () => {
+  it("all historical rows with accountId = null remain intact", async () => {
     const nullRows = await prisma.ledgerEntry.findMany({
       where: { accountId: null },
       orderBy: { createdAt: "asc" },
     });
 
-    // 29 historical + any unassigned created during tests
-    expect(nullRows.length).toBeGreaterThanOrEqual(29);
-
-    // Verify first 29 rows retain their exact original values
-    const originalSample = await prisma.ledgerEntry.findFirst({
-      where: { id: "cmumb078f0016poo7ygvkpcf4" },
-    });
-    if (originalSample) {
-      expect(originalSample.type).toBe("DISBURSEMENT");
-      expect(originalSample.amount.toString()).toBe("21870.33");
-      expect(originalSample.accountId).toBeNull();
+    // All null-accountId entries must exclusively be CLOSURE or ITEM_RELEASE type
+    // (the old "29" count was pinned to the old dev DB and no longer applies post-seed)
+    for (const row of nullRows) {
+      expect(["CLOSURE", "ITEM_RELEASE"]).toContain(row.type);
     }
   });
 

@@ -2,8 +2,12 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useDeleteLoanMutation, useUpdateLoanNotesMutation } from "@/lib/redux/api/loansApi";
-import { Trash2, Edit2, Loader2, AlertCircle, Save, FileText } from "lucide-react";
+import {
+  useDeleteLoanMutation,
+  useUpdateLoanNotesMutation,
+  useCancelDisbursedLoanMutation,
+} from "@/lib/redux/api/loansApi";
+import { Trash2, Edit2, Loader2, AlertCircle, Save, FileText, Ban } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -15,6 +19,7 @@ import {
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 
@@ -23,6 +28,7 @@ interface LoanCrudButtonsProps {
   loanNumber: string;
   initialNotes: string | null;
   canDelete: boolean;
+  status?: string;
 }
 
 export function LoanCrudButtons({
@@ -30,15 +36,35 @@ export function LoanCrudButtons({
   loanNumber,
   initialNotes,
   canDelete,
+  status = "ACTIVE",
 }: LoanCrudButtonsProps) {
   const router = useRouter();
   const [deleteLoan, { isLoading: deleting }] = useDeleteLoanMutation();
   const [updateLoanNotes, { isLoading: saving }] = useUpdateLoanNotesMutation();
+  const [cancelLoan, { isLoading: cancelling }] = useCancelDisbursedLoanMutation();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
   const [notes, setNotes] = useState(initialNotes || "");
   const [error, setError] = useState<string | null>(null);
-  const loading = deleting || saving;
+  const loading = deleting || saving || cancelling;
+
+  const handleCancelLoan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cancelReason.trim()) {
+      setError("Please provide a reason for cancelling this loan");
+      return;
+    }
+    setError(null);
+    const res = await cancelLoan({ loanId, reason: cancelReason });
+    if ("error" in res) {
+      setError((res.error as { message?: string })?.message || "Failed to cancel loan");
+    } else {
+      setCancelOpen(false);
+      router.refresh();
+    }
+  };
 
   const handleDelete = async () => {
     setError(null);
@@ -79,6 +105,23 @@ export function LoanCrudButtons({
           <Edit2 className="w-3.5 h-3.5 text-emerald-400" />
           Edit Notes
         </Button>
+        {status === "ACTIVE" && (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setCancelOpen(true);
+              setCancelReason("");
+              setError(null);
+            }}
+            className="hover:border-amber-500/40 text-amber-500 text-xs"
+            title="Cancel Disbursed Loan"
+          >
+            <Ban className="w-3.5 h-3.5 text-amber-500" />
+            Cancel Loan
+          </Button>
+        )}
         {canDelete && (
           <Button
             type="button"
@@ -184,6 +227,57 @@ export function LoanCrudButtons({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Cancel Disbursed Loan Modal */}
+      <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
+        <DialogContent className="border-amber-500/30 max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-500">
+              <Ban className="w-5 h-5 text-amber-500" />
+              <span>Cancel Disbursed Loan ({loanNumber})</span>
+            </DialogTitle>
+          </DialogHeader>
+
+          {error && (
+            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleCancelLoan} className="space-y-4 text-xs">
+            <p className="text-(--text-secondary) leading-relaxed">
+              Cancelling a disbursed loan marks it as closed and records a reversal transaction in the
+              accounting ledger. Collateral items will be released. All historical payment and ledger
+              records remain permanently preserved.
+            </p>
+
+            <div className="space-y-1.5">
+              <Label>Cancellation Reason *</Label>
+              <Input
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="e.g. Disbursed in error / customer requested immediate reversal"
+                required
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-(--border-primary)">
+              <Button type="button" variant="secondary" onClick={() => setCancelOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={loading || !cancelReason.trim()}
+                className="bg-amber-600 hover:bg-amber-700 text-white font-bold"
+              >
+                {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
+                Confirm Cancellation
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

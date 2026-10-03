@@ -6,7 +6,15 @@
  * Closure is a two-step process: financial close + physical item release (§6.5).
  */
 
-import { Prisma, MetalType, PaymentMode, LoanStatus } from "@prisma/client";
+import {
+  Prisma,
+  MetalType,
+  PaymentMode,
+  LoanStatus,
+  InterestType,
+  InterestFrequency,
+  CumulativeInterestTreatment,
+} from "@prisma/client";
 import { prisma, runSerializable } from "@/lib/db";
 import { debugLog } from "@/lib/debug";
 import { addMonths } from "date-fns";
@@ -16,7 +24,7 @@ import {
   getLtvPercent,
   computeEligibleAmount,
 } from "./valuation";
-import { computeAccruedInterest, computeInterestSummary } from "./interest";
+import { computeTotalInterestOwed, computeInterestSummary } from "./interest";
 import { writeLedgerEntry } from "@/lib/ledger-writer";
 import { resolveCounterCashAccount } from "@/lib/services/account-resolver";
 
@@ -26,7 +34,7 @@ type Decimal = Prisma.Decimal;
 // ==================== Types ====================
 
 export interface LoanItemInput {
-  metalType: MetalType;
+  metalType: MetalType | string;
   description: string;
   purityLabel: string;
   purityPercent: string | number;
@@ -35,6 +43,7 @@ export interface LoanItemInput {
   valuationRatePerGram: string | number;
   packetNumber: string;
   storageLocation: string;
+  photoUrls?: string[];
   photoUrl?: string;
 }
 
@@ -49,6 +58,10 @@ export interface CreateLoanInput {
   loanDate?: Date;
   processingFee?: string | number;
   disbursementMode?: PaymentMode;
+  interestType?: InterestType;
+  interestFrequency?: InterestFrequency;
+  cumulativePeriodMonths?: number;
+  interestTreatment?: CumulativeInterestTreatment;
 }
 
 export type LoanDisplayStatus = "ACTIVE" | "OVERDUE" | "CLOSED";
@@ -145,26 +158,40 @@ export async function createLoan(input: CreateLoanInput) {
         interestRateMonthly: new Decimal(input.interestRateMonthly),
         ltvPercent,
         gracePeriodDays: input.gracePeriodDays ?? 7,
+        interestType: input.interestType || "STANDARD",
+        interestFrequency: input.interestFrequency || "MONTHLY",
+        cumulativePeriodMonths: input.cumulativePeriodMonths || null,
+        interestTreatment: input.interestTreatment || null,
         totalAssessedValue,
         principalAmount,
         principalOutstanding: principalAmount,
         lastSettledDate: loanDate,
         items: {
-          create: computedItems.map((item) => ({
-            metalType: item.metalType,
-            description: item.description,
-            purityLabel: item.purityLabel,
-            purityPercent: new Decimal(item.purityPercent),
-            grossWeightGrams: new Decimal(item.grossWeightGrams),
-            stoneWeightGrams: new Decimal(item.stoneWeightGrams),
-            netWeightGrams: item.netWeightGrams,
-            fineWeightGrams: item.fineWeightGrams,
-            valuationRatePerGram: new Decimal(item.valuationRatePerGram),
-            assessedValue: item.assessedValue,
-            packetNumber: item.packetNumber,
-            storageLocation: item.storageLocation,
-            photoUrl: item.photoUrl,
-          })),
+          create: computedItems.map((item) => {
+            const metal =
+              item.metalType === "GOLD" || item.metalType === "SILVER"
+                ? (item.metalType as MetalType)
+                : MetalType.OTHER;
+            const photoUrls = item.photoUrls || (item.photoUrl ? [item.photoUrl] : []);
+            const primaryPhoto = item.photoUrl || (photoUrls.length > 0 ? photoUrls[0] : null);
+
+            return {
+              metalType: metal,
+              description: item.description,
+              purityLabel: item.purityLabel,
+              purityPercent: new Decimal(item.purityPercent),
+              grossWeightGrams: new Decimal(item.grossWeightGrams),
+              stoneWeightGrams: new Decimal(item.stoneWeightGrams),
+              netWeightGrams: item.netWeightGrams,
+              fineWeightGrams: item.fineWeightGrams,
+              valuationRatePerGram: new Decimal(item.valuationRatePerGram),
+              assessedValue: item.assessedValue,
+              packetNumber: item.packetNumber,
+              storageLocation: item.storageLocation,
+              photoUrls,
+              photoUrl: primaryPhoto,
+            };
+          }),
         },
       },
       include: { items: true },
@@ -239,10 +266,16 @@ export async function getLoanById(id: string) {
     principalOutstanding: fullLoan.principalOutstanding,
     interestRateMonthly: fullLoan.interestRateMonthly,
     lastSettledDate: fullLoan.lastSettledDate,
+    interestType: fullLoan.interestType,
+    interestFrequency: fullLoan.interestFrequency,
+    cumulativePeriodMonths: fullLoan.cumulativePeriodMonths,
+    interestTreatment: fullLoan.interestTreatment,
+    interestOutstanding: fullLoan.interestOutstanding,
+    lastCapitalizedAt: fullLoan.lastCapitalizedAt,
   });
 
   const totalDue = fullLoan.principalOutstanding
-    .plus(interestSummary.accruedInterest)
+    .plus(interestSummary.totalInterestOwed)
     .plus(
       fullLoan.charges
         .filter((c) => !c.isSettled)
@@ -400,18 +433,24 @@ export async function closeLoan(loanId: string, closedById: string) {
       throw new Error("Cannot close loan: unsettled charges remain");
     }
 
-    // Check if there's accrued interest
-    const accrued = computeAccruedInterest(
+    // Check if there is any outstanding interest
+    const totalInterest = computeTotalInterestOwed(
       {
         principalOutstanding: loan.principalOutstanding,
         interestRateMonthly: loan.interestRateMonthly,
         lastSettledDate: loan.lastSettledDate,
+        interestType: loan.interestType,
+        interestFrequency: loan.interestFrequency,
+        cumulativePeriodMonths: loan.cumulativePeriodMonths,
+        interestTreatment: loan.interestTreatment,
+        interestOutstanding: loan.interestOutstanding,
+        lastCapitalizedAt: loan.lastCapitalizedAt,
+        loanDate: loan.loanDate,
       },
       new Date()
     );
-    // Principal is 0, so accrued should be 0 — but verify
-    if (accrued.gt(new Decimal("0.01"))) {
-      throw new Error(`Cannot close loan: ₹${accrued.toString()} interest still accrued`);
+    if (totalInterest.gt(new Decimal("0.01"))) {
+      throw new Error(`Cannot close loan: ₹${totalInterest.toString()} interest still outstanding`);
     }
 
     const now = new Date();

@@ -10,7 +10,6 @@ import {
   ArrowUpRight,
   Minus,
   Calendar,
-  Filter,
   RefreshCw,
   Loader2,
   Phone,
@@ -111,21 +110,16 @@ const getTodayStr = () => {
   return `${year}-${month}-${day}`;
 };
 
-const getMonthStartStr = () => {
+const getYesterdayStr = () => {
   const d = new Date();
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  return `${year}-${month}-01`;
-};
-
-const getLast30DaysStr = () => {
-  const d = new Date();
-  d.setDate(d.getDate() - 30);
+  d.setDate(d.getDate() - 1);
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 };
+
+type DateFilterMode = "today" | "yesterday" | "date" | "range";
 
 export function AccountLedgerClient() {
   const searchParams = useSearchParams();
@@ -136,10 +130,10 @@ export function AccountLedgerClient() {
   const [selectedAccountId, setSelectedAccountId] = useState<string>(initialAccountId);
   const [selectedAccount, setSelectedAccount] = useState<LedgerAccount | null>(null);
 
-  const [datePreset, setDatePreset] = useState<"ALL_TIME" | "TODAY" | "THIS_MONTH" | "LAST_30" | "CUSTOM">("ALL_TIME");
-  const [startDate, setStartDate] = useState<string>("");
-  const [endDate, setEndDate] = useState<string>("");
-  const [eventType, setEventType] = useState<"ALL" | "PAYMENT" | "DISBURSEMENT" | "CLOSURE" | "ITEM_RELEASE">("ALL");
+  const [dateMode, setDateMode] = useState<DateFilterMode>("today");
+  const [singleDate, setSingleDate] = useState<string>(getTodayStr());
+  const [fromDate, setFromDate] = useState<string>(getTodayStr());
+  const [toDate, setToDate] = useState<string>(getTodayStr());
   const [searchQuery, setSearchQuery] = useState<string>("");
 
   const [entries, setEntries] = useState<AccountLedgerEntry[]>([]);
@@ -170,10 +164,70 @@ export function AccountLedgerClient() {
     };
   }, [selectedAccountId]);
 
+  // Compute effective start and end dates based on current mode
+  const getEffectiveDates = useCallback((): { sDate: string; eDate: string } => {
+    if (dateMode === "today") {
+      const today = getTodayStr();
+      return { sDate: today, eDate: today };
+    }
+    if (dateMode === "yesterday") {
+      const yesterday = getYesterdayStr();
+      return { sDate: yesterday, eDate: yesterday };
+    }
+    if (dateMode === "date") {
+      return { sDate: singleDate, eDate: singleDate };
+    }
+    return { sDate: fromDate, eDate: toDate };
+  }, [dateMode, singleDate, fromDate, toDate]);
+
   // Fetch ledger data
   const fetchLedger = useCallback(
-    async (accId: string, sDate: string, eDate: string, eType: typeof eventType, q: string) => {
+    async (accId: string, sDate: string, eDate: string, q: string) => {
       if (!accId) return;
+
+      // Validate date parameters based on mode
+      if (dateMode === "range") {
+        if (!sDate) {
+          setError("Please select a From date.");
+          setLoading(false);
+          return;
+        }
+        if (!eDate) {
+          setError("Please select a To date.");
+          setLoading(false);
+          return;
+        }
+        const s = new Date(sDate);
+        const e = new Date(eDate);
+        if (isNaN(s.getTime())) {
+          setError("From date is invalid. Please enter a valid date.");
+          setLoading(false);
+          return;
+        }
+        if (isNaN(e.getTime())) {
+          setError("To date is invalid. Please enter a valid date.");
+          setLoading(false);
+          return;
+        }
+        if (sDate > eDate) {
+          setError("From date cannot be after To date. Please fix the date range.");
+          setLoading(false);
+          return;
+        }
+      } else if (dateMode === "date") {
+        if (!sDate) {
+          setError("Please select a valid date.");
+          setLoading(false);
+          return;
+        }
+        const d = new Date(sDate);
+        if (isNaN(d.getTime())) {
+          setError("Invalid date. Please enter a valid date.");
+          setLoading(false);
+          return;
+        }
+      }
+
       setLoading(true);
       setError(null);
 
@@ -182,7 +236,6 @@ export function AccountLedgerClient() {
           accountId: accId,
           startDate: sDate || null,
           endDate: eDate || null,
-          eventType: eType,
           search: q || undefined,
           sortOrder: "asc",
         });
@@ -200,37 +253,24 @@ export function AccountLedgerClient() {
         });
       }
     },
-    []
+    [dateMode]
   );
 
   // Trigger fetch when parameters change
   useEffect(() => {
     if (selectedAccountId) {
-      fetchLedger(selectedAccountId, startDate, endDate, eventType, searchQuery);
+      const { sDate, eDate } = getEffectiveDates();
+      fetchLedger(selectedAccountId, sDate, eDate, searchQuery);
     }
-  }, [selectedAccountId, startDate, endDate, eventType, searchQuery, fetchLedger]);
+  }, [selectedAccountId, getEffectiveDates, searchQuery, fetchLedger]);
 
   const handleAccountChange = (newAccId: string) => {
+    if (newAccId === "ADD_NEW_ACCOUNT") {
+      router.push("/admin/accounts?addAccount=true");
+      return;
+    }
     setSelectedAccountId(newAccId);
     router.replace(`/account-ledger?accountId=${newAccId}`);
-  };
-
-  const handleDatePreset = (preset: typeof datePreset) => {
-    setDatePreset(preset);
-    if (preset === "ALL_TIME") {
-      setStartDate("");
-      setEndDate("");
-    } else if (preset === "TODAY") {
-      const today = getTodayStr();
-      setStartDate(today);
-      setEndDate(today);
-    } else if (preset === "THIS_MONTH") {
-      setStartDate(getMonthStartStr());
-      setEndDate(getTodayStr());
-    } else if (preset === "LAST_30") {
-      setStartDate(getLast30DaysStr());
-      setEndDate(getTodayStr());
-    }
   };
 
   return (
@@ -268,7 +308,10 @@ export function AccountLedgerClient() {
             </Link>
 
             <button
-              onClick={() => fetchLedger(selectedAccountId, startDate, endDate, eventType, searchQuery)}
+              onClick={() => {
+                const { sDate, eDate } = getEffectiveDates();
+                fetchLedger(selectedAccountId, sDate, eDate, searchQuery);
+              }}
               disabled={loading}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer hover:bg-(--bg-tertiary) disabled:opacity-50"
               style={{
@@ -286,13 +329,13 @@ export function AccountLedgerClient() {
 
       {/* Account Selector & Filter Card */}
       <div
-        className="rounded-2xl p-5 shadow-sm space-y-4"
+        className="rounded-2xl p-5 shadow-sm space-y-3"
         style={{
           background: "var(--bg-card)",
           border: "1px solid var(--border-primary)",
         }}
       >
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
           {/* Account Selector */}
           <div className="md:col-span-4 space-y-1.5">
             <label className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
@@ -315,6 +358,10 @@ export function AccountLedgerClient() {
                     {acc.code} — {acc.name} ({acc.type}) {!acc.isActive ? "[INACTIVE]" : ""}
                   </option>
                 ))}
+                <option disabled value="">──────────────</option>
+                <option value="ADD_NEW_ACCOUNT" className="font-semibold text-[#B38646]">
+                  + Add New Account
+                </option>
               </select>
               <Landmark
                 className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
@@ -323,44 +370,80 @@ export function AccountLedgerClient() {
             </div>
           </div>
 
-          {/* Date Presets */}
-          <div className="md:col-span-5 space-y-1.5">
-            <label className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
-              Date Range
+          {/* Date Filter */}
+          <div className="md:col-span-5 space-y-2">
+            <label className="text-xs font-medium flex items-center gap-1.5" style={{ color: "var(--text-secondary)" }}>
+              <Calendar className="w-3.5 h-3.5" />
+              <span>Date Filter</span>
             </label>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               {[
-                { label: "All Time", value: "ALL_TIME" },
-                { label: "Today", value: "TODAY" },
-                { label: "This Month", value: "THIS_MONTH" },
-                { label: "Last 30 Days", value: "LAST_30" },
-                { label: "Custom", value: "CUSTOM" },
+                { label: "Today", value: "today" },
+                { label: "Yesterday", value: "yesterday" },
+                { label: "Date", value: "date" },
+                { label: "Date Range", value: "range" },
               ].map((btn) => (
                 <button
                   key={btn.value}
                   type="button"
-                  onClick={() => handleDatePreset(btn.value as typeof datePreset)}
-                  className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer"
-                  style={{
-                    background:
-                      datePreset === btn.value
-                        ? "var(--accent)"
-                        : "var(--bg-tertiary)",
-                    color:
-                      datePreset === btn.value
-                        ? "var(--text-inverse)"
-                        : "var(--text-secondary)",
-                    border: `1px solid ${
-                      datePreset === btn.value
-                        ? "var(--accent)"
-                        : "var(--border-primary)"
-                    }`,
+                  onClick={() => {
+                    setDateMode(btn.value as DateFilterMode);
+                    setError(null);
                   }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    dateMode === btn.value
+                      ? "bg-[#B38646] text-white shadow-xs"
+                      : "bg-(--bg-tertiary) text-(--text-secondary) hover:text-(--text-primary) border border-(--border-primary)"
+                  }`}
                 >
                   {btn.label}
                 </button>
               ))}
             </div>
+
+            {/* Single Date Picker */}
+            {dateMode === "date" && (
+              <div className="flex items-center gap-2 pt-1">
+                <span className="text-xs font-medium text-(--text-muted)">Date:</span>
+                <input
+                  type="date"
+                  value={singleDate}
+                  onChange={(e) => {
+                    setSingleDate(e.target.value);
+                    setError(null);
+                  }}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-(--bg-tertiary) border border-(--border-primary) text-(--text-primary) focus:outline-none focus:border-(--accent)"
+                />
+              </div>
+            )}
+
+            {/* Date Range Pickers */}
+            {dateMode === "range" && (
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <span className="text-xs font-medium text-(--text-muted)">From:</span>
+                <input
+                  type="date"
+                  value={fromDate}
+                  max={toDate || undefined}
+                  onChange={(e) => {
+                    setFromDate(e.target.value);
+                    setError(null);
+                  }}
+                  className="px-2.5 py-1.5 text-xs font-semibold rounded-xl bg-(--bg-tertiary) border border-(--border-primary) text-(--text-primary) focus:outline-none focus:border-(--accent)"
+                />
+                <span className="text-xs font-medium text-(--text-muted)">To:</span>
+                <input
+                  type="date"
+                  value={toDate}
+                  min={fromDate || undefined}
+                  onChange={(e) => {
+                    setToDate(e.target.value);
+                    setError(null);
+                  }}
+                  className="px-2.5 py-1.5 text-xs font-semibold rounded-xl bg-(--bg-tertiary) border border-(--border-primary) text-(--text-primary) focus:outline-none focus:border-(--accent)"
+                />
+              </div>
+            )}
           </div>
 
           {/* Search Query */}
@@ -387,87 +470,6 @@ export function AccountLedgerClient() {
               />
             </div>
           </div>
-        </div>
-
-        {/* Custom Date Pickers (if CUSTOM preset active) */}
-        {datePreset === "CUSTOM" && (
-          <div
-            className="pt-3 border-t grid grid-cols-1 sm:grid-cols-2 gap-3"
-            style={{ borderColor: "var(--border-primary)" }}
-          >
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-(--text-muted) w-16">Start Date:</span>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="px-3 py-1.5 rounded-lg text-xs border flex-1"
-                style={{
-                  background: "var(--bg-input)",
-                  borderColor: "var(--border-primary)",
-                  color: "var(--text-primary)",
-                }}
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-(--text-muted) w-16">End Date:</span>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="px-3 py-1.5 rounded-lg text-xs border flex-1"
-                style={{
-                  background: "var(--bg-input)",
-                  borderColor: "var(--border-primary)",
-                  color: "var(--text-primary)",
-                }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Event Type Filter Pills */}
-        <div
-          className="pt-3 border-t flex flex-wrap items-center gap-2"
-          style={{ borderColor: "var(--border-primary)" }}
-        >
-          <span
-            className="text-xs font-semibold mr-1 flex items-center gap-1"
-            style={{ color: "var(--text-muted)" }}
-          >
-            <Filter className="w-3 h-3" /> Event:
-          </span>
-          {[
-            { label: "All Events", value: "ALL" },
-            { label: "Payments (Inflows)", value: "PAYMENT" },
-            { label: "Disbursements (Outflows)", value: "DISBURSEMENT" },
-            { label: "Closures", value: "CLOSURE" },
-            { label: "Item Releases", value: "ITEM_RELEASE" },
-          ].map((pill) => (
-            <button
-              key={pill.value}
-              type="button"
-              onClick={() => setEventType(pill.value as typeof eventType)}
-              className="px-2.5 py-1 rounded-md text-xs font-medium transition-all cursor-pointer"
-              style={{
-                background:
-                  eventType === pill.value
-                    ? "var(--accent-bg)"
-                    : "transparent",
-                color:
-                  eventType === pill.value
-                    ? "var(--accent-text)"
-                    : "var(--text-tertiary)",
-                border: `1px solid ${
-                  eventType === pill.value
-                    ? "var(--accent-border)"
-                    : "var(--border-primary)"
-                }`,
-              }}
-            >
-              {pill.label}
-            </button>
-          ))}
         </div>
       </div>
 
@@ -512,7 +514,7 @@ export function AccountLedgerClient() {
               {formatINR(summary.openingBalance)}
             </div>
             <p className="text-[10px] text-(--text-muted) mt-1 truncate">
-              {startDate ? `Prior to ${formatDate(startDate)}` : "Initial state"}
+              {getEffectiveDates().sDate ? `Prior to ${formatDate(getEffectiveDates().sDate)}` : "Initial state"}
             </p>
           </div>
 

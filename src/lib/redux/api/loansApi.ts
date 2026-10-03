@@ -7,6 +7,7 @@ import {
   releaseItemsAction,
   updateLoanNotesAction,
   deleteLoanAction,
+  cancelDisbursedLoanAction,
 } from "@/app/(app)/loans/[id]/actions";
 import { createLoanAction } from "@/app/(app)/loans/new/actions";
 import type { LoanFilters } from "@/lib/services/loans";
@@ -83,6 +84,21 @@ export const loansApi = api.injectEndpoints({
         "Dashboard",
       ],
     }),
+
+    cancelDisbursedLoan: builder.mutation<
+      { success: boolean; error?: string },
+      { loanId: string; reason: string }
+    >({
+      query: ({ loanId, reason }) => ({
+        action: cancelDisbursedLoanAction,
+        args: [loanId, reason],
+      }),
+      invalidatesTags: (_result, _error, { loanId }) => [
+        { type: "Loan", id: loanId },
+        { type: "LoanList", id: "LIST" },
+        "Dashboard",
+      ],
+    }),
   }),
 });
 
@@ -95,4 +111,5 @@ export const {
   useReleaseItemsMutation,
   useUpdateLoanNotesMutation,
   useDeleteLoanMutation,
+  useCancelDisbursedLoanMutation,
 } = loansApi;

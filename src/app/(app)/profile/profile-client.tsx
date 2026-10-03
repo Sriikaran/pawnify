@@ -367,7 +367,7 @@ export function ProfileClient({ user }: ProfileClientProps) {
         </div>
       </div>
 
-      {/* Supabase Storage Card for Staff Documents */}
+      {/* Staff Documents & Profile Attachments */}
       <div className="glass-card p-6 sm:p-8 space-y-4 border border-(--border-primary)">
         <DocumentUploader
           label="Upload Official Staff Documents & Profile Attachments (ID Proof / Digital Signature / Avatar)"

@@ -6,7 +6,7 @@ import { z } from "zod";
 
 export const loanItemSchema = z
   .object({
-    metalType: z.enum(["GOLD", "SILVER"]),
+    metalType: z.string().min(1, "Metal type is required"),
     description: z.string().min(1, "Item description is required").max(200),
     purityLabel: z.string().min(1, "Purity label is required"),
     purityPercent: z.coerce
@@ -18,7 +18,8 @@ export const loanItemSchema = z
     valuationRatePerGram: z.coerce.number().gt(0, "Valuation rate must be greater than 0"),
     packetNumber: z.string().min(1, "Packet number is required"),
     storageLocation: z.string().min(1, "Storage location is required"),
-    photoUrl: z.string().url().optional().or(z.literal("")),
+    photoUrls: z.array(z.string()).default([]),
+    photoUrl: z.string().optional().or(z.literal("")),
   })
   .refine((data) => data.stoneWeightGrams < data.grossWeightGrams, {
     message: "Stone weight must be less than gross weight",
@@ -47,6 +48,13 @@ export const createLoanSchema = z.object({
     .lte(90, "Grace period cannot exceed 90 days")
     .default(7),
   processingFee: z.coerce.number().gte(0).optional(),
+  // Extended interest parameters
+  interestType: z.enum(["STANDARD", "CUMULATIVE"]).default("STANDARD"),
+  interestFrequency: z
+    .enum(["DAILY", "MONTHLY", "QUARTERLY", "HALF_YEARLY", "YEARLY", "CUSTOM"])
+    .default("MONTHLY"),
+  cumulativePeriodMonths: z.coerce.number().int().min(1).max(60).optional(),
+  interestTreatment: z.enum(["ADD_TO_CAPITAL", "KEEP_SEPARATE"]).optional(),
 });
 
 export type CreateLoanFormInput = z.infer<typeof createLoanSchema>;

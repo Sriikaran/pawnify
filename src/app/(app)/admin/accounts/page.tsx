@@ -1,4 +1,4 @@
-import React from "react";
+import React, { Suspense } from "react";
 import { checkAuth } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
 import { listAccounts } from "@/lib/services/accounts";
@@ -19,9 +19,11 @@ export default async function AccountsPage() {
   const initialAccounts = await listAccounts();
 
   return (
-    <AccountsClient
-      userRole={auth.user.role}
-      initialAccounts={JSON.parse(JSON.stringify(initialAccounts))}
-    />
+    <Suspense fallback={<div className="p-8 text-center text-sm text-(--text-muted)">Loading Account Master...</div>}>
+      <AccountsClient
+        userRole={auth.user.role}
+        initialAccounts={JSON.parse(JSON.stringify(initialAccounts))}
+      />
+    </Suspense>
   );
 }

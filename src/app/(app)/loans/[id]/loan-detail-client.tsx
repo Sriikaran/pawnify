@@ -131,6 +131,7 @@ export function LoanDetailClient({ id, isAdmin }: LoanDetailClientProps) {
             loanNumber={loan.loanNumber}
             initialNotes={loan.notes || ""}
             canDelete={isAdmin}
+            status={loan.status}
           />
           <PawnTicketPrintButton />
 
@@ -360,14 +361,25 @@ export function LoanDetailClient({ id, isAdmin }: LoanDetailClientProps) {
               </div>
 
               <div className="flex items-center justify-between">
-                <span className="text-(--text-secondary) text-xs">Monthly Simple Interest</span>
+                <span className="text-(--text-secondary) text-xs">Interest Model & Rate</span>
                 <span className="font-bold text-(--accent)">
-                  {loan.interestRateMonthly.toString()}% p.m.
+                  {loan.interestType === "CUMULATIVE" ? "Cumulative" : "Standard"} •{" "}
+                  {loan.interestRateMonthly.toString()}% p.m. ({loan.interestFrequency || "Monthly"})
                 </span>
               </div>
 
+              {loan.interestType === "CUMULATIVE" && (
+                <div className="flex items-center justify-between">
+                  <span className="text-(--text-secondary) text-xs">Cumulative Period & Treatment</span>
+                  <span className="text-xs text-(--text-primary) font-mono">
+                    {loan.cumulativePeriodMonths ? `${loan.cumulativePeriodMonths}m` : "12m"} •{" "}
+                    {loan.interestTreatment === "ADD_TO_CAPITAL" ? "Add to Capital" : "Keep Separate"}
+                  </span>
+                </div>
+              )}
+
               <div className="flex items-center justify-between">
-                <span className="text-(--text-secondary) text-xs">RBI LTV Slab Applied</span>
+                <span className="text-(--text-secondary) text-xs">LTV Slab Applied</span>
                 <span className="font-bold text-(--text-primary)">
                   {loan.ltvPercent.toString()}%
                 </span>

@@ -19,6 +19,7 @@ enum Role {
 enum MetalType {
   GOLD
   SILVER
+  OTHER
 }
 
 enum LoanStatus {
@@ -58,6 +59,7 @@ enum TransactionType {
   PAYMENT
   CLOSURE
   ITEM_RELEASE
+  CANCELLATION
 }
 
 enum FollowUpStatus {
@@ -72,6 +74,48 @@ enum AccountType {
   INCOME
   EXPENSE
   EQUITY
+}
+
+/// Interest type on a loan.
+/// STANDARD: Simple interest, does not capitalize.
+/// CUMULATIVE: Compound interest — interest may capitalize at configured intervals.
+enum InterestType {
+  STANDARD
+  CUMULATIVE
+}
+
+/// How often interest accrues / resets for payment purposes.
+enum InterestFrequency {
+  DAILY
+  MONTHLY
+  QUARTERLY
+  HALF_YEARLY
+  YEARLY
+  CUSTOM
+}
+
+/// For CUMULATIVE loans: what happens to accrued interest at each period end.
+/// ADD_TO_CAPITAL: Accrued interest is capitalized (added to principal).
+/// KEEP_SEPARATE: Accrued interest remains separate; principal is not increased.
+enum CumulativeInterestTreatment {
+  ADD_TO_CAPITAL
+  KEEP_SEPARATE
+}
+
+/// The explicit type of a payment — controls allocation waterfall.
+enum PaymentType {
+  /// Full waterfall: charges → interest → principal
+  FULL
+  /// Reduce interest only; principal unchanged
+  INTEREST_ONLY
+  /// Reduce principal only; unpaid interest remains due
+  PRINCIPAL_ONLY
+  /// Partial payment against total outstanding (standard waterfall, does not close loan)
+  PART_PAYMENT
+  /// Full settlement + closure
+  CLOSURE
+  /// Early closure settlement
+  EARLY_CLOSURE
 }
 
 // ==================== BETTER AUTH TABLES ====================
@@ -104,6 +148,8 @@ model user {
   followUpsAssigned FollowUp[] @relation("AssignedStaff")
   kycVerified       KycDocument[] @relation("VerifiedByStaff")
   accountsCreated   AccountMaster[] @relation("AccountCreatedBy")
+  metalsCreated     MetalMaster[] @relation("MetalCreatedBy")
+  puritiesCreated   PurityMaster[] @relation("PurityCreatedBy")
 }
 
 model session {
@@ -143,6 +189,48 @@ model verification {
   expiresAt  DateTime
   createdAt  DateTime? @default(now())
   updatedAt  DateTime? @updatedAt
+}
+
+// ==================== MASTER DATA ====================
+
+/// Metal master — extended to support custom metals beyond GOLD/SILVER.
+model MetalMaster {
+  id          String      @id @default(cuid())
+  /// Internal enum-compatible key (e.g. "GOLD", "SILVER", "PLATINUM")
+  metalKey    String      @unique
+  /// Display name shown to users
+  displayName String
+  isActive    Boolean     @default(true)
+  isSystem    Boolean     @default(false) // System defaults cannot be deleted
+  createdById String?
+  createdBy   user?       @relation("MetalCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  purities    PurityMaster[]
+
+  @@index([isActive])
+}
+
+/// Purity master — stores validated purity fineness for each metal.
+model PurityMaster {
+  id           String      @id @default(cuid())
+  metalMasterId String
+  metalMaster  MetalMaster @relation(fields: [metalMasterId], references: [id])
+  label        String      // e.g. "22K", "18K", "Sterling Silver"
+  /// Fineness as a percentage (0–100). E.g. 22K = 91.6
+  purityPercent Decimal    @db.Decimal(5, 3)
+  /// Fineness code (e.g. "916", "925") for display
+  finenessCode  String?
+  isActive      Boolean    @default(true)
+  isSystem      Boolean    @default(false)
+  createdById   String?
+  createdBy     user?      @relation("PurityCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@unique([metalMasterId, label])
+  @@index([metalMasterId, isActive])
 }
 
 // ==================== DOMAIN MODELS ====================
@@ -203,6 +291,23 @@ model Loan {
   ltvPercent           Decimal       @db.Decimal(5, 2)
   gracePeriodDays      Int           @default(7)
 
+  // ── Interest Model (added in Phase 15) ─────────────────────
+  // Default STANDARD / MONTHLY for backward compatibility with all historical loans.
+  interestType         InterestType              @default(STANDARD)
+  interestFrequency    InterestFrequency         @default(MONTHLY)
+
+  // CUMULATIVE-only fields. null for STANDARD loans.
+  cumulativePeriodMonths Int?         // How many months per capitalization cycle
+  interestTreatment    CumulativeInterestTreatment? // ADD_TO_CAPITAL or KEEP_SEPARATE
+
+  // Separate interest outstanding (used when interestTreatment = KEEP_SEPARATE).
+  // For ADD_TO_CAPITAL loans, interest is folded into principalOutstanding at each period end.
+  // For STANDARD loans, this field is unused (always 0).
+  interestOutstanding  Decimal       @db.Decimal(12, 2) @default(0)
+  lastCapitalizedAt    DateTime?     // Timestamp of last capitalization event
+
+  // ── End Interest Model ──────────────────────────────────────
+
   totalAssessedValue   Decimal       @db.Decimal(12, 2)
   principalAmount      Decimal       @db.Decimal(12, 2)
   principalOutstanding Decimal       @db.Decimal(12, 2)
@@ -212,6 +317,11 @@ model Loan {
   closedAt             DateTime?
   closedById           String?
   notes                String?
+
+  // Cancellation/reversal tracking (for post-disbursement reversals)
+  cancelledAt          DateTime?
+  cancelledById        String?
+  cancellationReason   String?
 
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
@@ -245,7 +355,8 @@ model LoanItem {
 
   packetNumber         String     @unique
   storageLocation      String
-  photoUrl             String?
+  photoUrls            String[]   @default([]) // Multiple photos per item
+  photoUrl             String?    // Legacy single photo field (kept for backward compat)
   releasedAt           DateTime?
 
   createdAt            DateTime   @default(now())
@@ -269,6 +380,7 @@ model Payment {
   paymentDate        DateTime    @default(now())
   amountPaid         Decimal     @db.Decimal(12, 2)
   mode               PaymentMode
+  paymentType        PaymentType @default(FULL)
   allocatedCharges   Decimal     @db.Decimal(12, 2) @default(0)
   allocatedInterest  Decimal     @db.Decimal(12, 2) @default(0)
   allocatedPrincipal Decimal     @db.Decimal(12, 2) @default(0)
@@ -331,4 +443,3 @@ model AccountMaster {
   @@index([type])
   @@index([isActive])
 }
-

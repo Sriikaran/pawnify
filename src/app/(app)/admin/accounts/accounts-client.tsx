@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useTransition } from "react";
+import React, { useState, useEffect, useTransition } from "react";
 import Link from "next/link";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,19 +58,35 @@ const ACCOUNT_TYPES: Array<{ type: AccountType; label: string; icon: React.Compo
 
 export function AccountsClient({ userRole, initialAccounts }: AccountsClientProps) {
   const isAdmin = userRole === "ADMIN";
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
   const [accounts, setAccounts] = useState<AccountMasterWithCreator[]>(initialAccounts);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [isPending, startTransition] = useTransition();
 
-  // Create Modal state
-  const [createOpen, setCreateOpen] = useState(false);
+  // Create Modal state (auto-opens if navigated with ?addAccount=true)
+  const shouldAutoOpen = searchParams.get("addAccount") === "true";
+  const [createOpen, setCreateOpen] = useState(shouldAutoOpen && isAdmin);
   const [createCode, setCreateCode] = useState("");
   const [createName, setCreateName] = useState("");
   const [createType, setCreateType] = useState<AccountType>("ASSET");
   const [createDesc, setCreateDesc] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
+
+  // Clean up ?addAccount=true from the URL so page refreshes don't re-trigger it
+  useEffect(() => {
+    if (searchParams.get("addAccount") === "true") {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("addAccount");
+      const newQuery = params.toString();
+      const newUrl = newQuery ? `${pathname}?${newQuery}` : pathname;
+      router.replace(newUrl, { scroll: false });
+    }
+  }, [searchParams, router, pathname]);
 
   // Edit Modal state
   const [editOpen, setEditOpen] = useState(false);

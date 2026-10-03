@@ -24,8 +24,18 @@ import { projectMonetaryDecimal } from "@/lib/projection";
 export type CashFlowDirection = "INFLOW" | "OUTFLOW" | "NEUTRAL";
 
 export interface DayBookFilter {
-  /** Target date (Date object or YYYY-MM-DD string). Defaults to today. */
+  /** Target single date (Date object or YYYY-MM-DD string). Defaults to today. */
   date?: Date | string;
+  /**
+   * Start of an inclusive date range (YYYY-MM-DD or Date).
+   * When provided along with endDate, overrides the single `date` field.
+   */
+  startDate?: Date | string;
+  /**
+   * End of an inclusive date range (YYYY-MM-DD or Date).
+   * Required when startDate is provided.
+   */
+  endDate?: Date | string;
   /** Filter by event type: "ALL" or specific TransactionType */
   eventType?: "ALL" | TransactionType;
   /** Filter by AccountMaster ID, or "UNASSIGNED" for legacy NULL account rows */
@@ -66,7 +76,14 @@ export interface DayBookSummary {
 }
 
 export interface DayBookResult {
+  /** Effective date label (single date or "YYYY-MM-DD – YYYY-MM-DD" range). */
   date: string;
+  /** Whether the result spans multiple days. */
+  isRange: boolean;
+  /** Inclusive range start (YYYY-MM-DD). */
+  startDate: string;
+  /** Inclusive range end (YYYY-MM-DD). */
+  endDate: string;
   entries: DayBookEntryItem[];
   summary: DayBookSummary;
   calculationMode: CalculationMode;
@@ -89,7 +106,7 @@ export function classifyFlow(type: TransactionType): CashFlowDirection {
 }
 
 /**
- * Normalizes input date to start and end of day in local/UTC context.
+ * Normalizes a single input date to start and end of day (local time).
  */
 export function getDateRange(inputDate?: Date | string): { start: Date; end: Date; dateStr: string } {
   const d = inputDate ? new Date(inputDate) : new Date();
@@ -111,6 +128,59 @@ export function getDateRange(inputDate?: Date | string): { start: Date; end: Dat
   return { start, end, dateStr };
 }
 
+/** Format a Date as YYYY-MM-DD (local). */
+function toDateStr(d: Date): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Resolves an inclusive date range from the filter.
+ * If startDate + endDate are provided → uses them.
+ * Otherwise falls back to single `date` (or today).
+ *
+ * Returns: { start, end, startDateStr, endDateStr, isRange }
+ */
+export function resolveDateRange(filter: DayBookFilter): {
+  start: Date;
+  end: Date;
+  startDateStr: string;
+  endDateStr: string;
+  isRange: boolean;
+} {
+  if (filter.startDate && filter.endDate) {
+    const s = new Date(filter.startDate);
+    const e = new Date(filter.endDate);
+    if (isNaN(s.getTime())) throw new Error("Invalid From date.");
+    if (isNaN(e.getTime())) throw new Error("Invalid To date.");
+
+    const start = new Date(s);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(e);
+    end.setHours(23, 59, 59, 999);
+
+    return {
+      start,
+      end,
+      startDateStr: toDateStr(s),
+      endDateStr: toDateStr(e),
+      isRange: toDateStr(s) !== toDateStr(e),
+    };
+  }
+
+  // Fall back to single-date mode
+  const { start, end, dateStr } = getDateRange(filter.date);
+  return {
+    start,
+    end,
+    startDateStr: dateStr,
+    endDateStr: dateStr,
+    isRange: false,
+  };
+}
+
 /**
  * Queries Day Book entries with full relational joins, flow classification,
  * KPI summary calculation, and optional 50% presentation projection.
@@ -122,7 +192,7 @@ export async function getDayBookEntries(
   filter: DayBookFilter = {},
   mode: CalculationMode = "NORMAL"
 ): Promise<DayBookResult> {
-  const { start, end, dateStr } = getDateRange(filter.date);
+  const { start, end, startDateStr, endDateStr, isRange } = resolveDateRange(filter);
 
   const where: Prisma.LedgerEntryWhereInput = {
     createdAt: {
@@ -238,8 +308,13 @@ export async function getDayBookEntries(
     itemReleaseCount,
   };
 
+  const dateLabel = isRange ? `${startDateStr} – ${endDateStr}` : startDateStr;
+
   return {
-    date: dateStr,
+    date: dateLabel,
+    isRange,
+    startDate: startDateStr,
+    endDate: endDateStr,
     entries,
     summary,
     calculationMode: mode,

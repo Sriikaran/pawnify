@@ -192,6 +192,9 @@ export function projectInterestSummary<
     accruedInterest: Prisma.Decimal;
     dailyInterest: Prisma.Decimal;
     monthlyInterest: Prisma.Decimal;
+    totalInterestOwed?: Prisma.Decimal;
+    periodicInterestOutstanding?: Prisma.Decimal;
+    capitalizedPrincipal?: Prisma.Decimal;
     daysSinceSettled?: number;
   }
 >(summary: T, mode: CalculationMode): T {
@@ -201,7 +204,16 @@ export function projectInterestSummary<
     accruedInterest: projectMonetaryDecimal(summary.accruedInterest, mode),
     dailyInterest: projectMonetaryDecimal(summary.dailyInterest, mode),
     monthlyInterest: projectMonetaryDecimal(summary.monthlyInterest, mode),
-    // daysSinceSettled remains untouched (duration, not monetary)
+    ...(summary.totalInterestOwed !== undefined
+      ? { totalInterestOwed: projectMonetaryDecimal(summary.totalInterestOwed, mode) }
+      : {}),
+    ...(summary.periodicInterestOutstanding !== undefined
+      ? { periodicInterestOutstanding: projectMonetaryDecimal(summary.periodicInterestOutstanding, mode) }
+      : {}),
+    ...(summary.capitalizedPrincipal !== undefined
+      ? { capitalizedPrincipal: projectMonetaryDecimal(summary.capitalizedPrincipal, mode) }
+      : {}),
+    // daysSinceSettled, frequencies, rates, etc. remain untouched
   };
 }
 
@@ -231,6 +243,9 @@ export function projectLoan<T extends GenericRecord>(
   if ("totalAssessedValue" in loan && loan.totalAssessedValue !== undefined) {
     projected.totalAssessedValue = projectMonetaryDecimal(loan.totalAssessedValue as Prisma.Decimal, mode);
   }
+  if ("assessedValue" in loan && loan.assessedValue !== undefined) {
+    projected.assessedValue = projectMonetaryDecimal(loan.assessedValue as Prisma.Decimal, mode);
+  }
   if ("eligibleAmount" in loan && loan.eligibleAmount !== undefined) {
     projected.eligibleAmount = projectMonetaryDecimal(loan.eligibleAmount as Prisma.Decimal, mode);
   }
@@ -239,6 +254,9 @@ export function projectLoan<T extends GenericRecord>(
   }
   if ("totalDue" in loan && loan.totalDue !== undefined) {
     projected.totalDue = projectMonetaryDecimal(loan.totalDue as Prisma.Decimal, mode);
+  }
+  if ("interestOutstanding" in loan && loan.interestOutstanding !== undefined) {
+    projected.interestOutstanding = projectMonetaryDecimal(loan.interestOutstanding as Prisma.Decimal, mode);
   }
 
   if (Array.isArray(loan.items)) {
@@ -318,26 +336,39 @@ export function projectDashboardStats<T extends GenericRecord>(
   };
 
   const lss = stats.loanStatusSummary as GenericRecord | undefined;
+  const activeObj = (lss?.ACTIVE || lss?.active) as { count: number; amount: Prisma.Decimal } | undefined;
+  const overdueObj = (lss?.OVERDUE || lss?.overdue) as { count: number; amount: Prisma.Decimal } | undefined;
+  const closedObj = (lss?.CLOSED || lss?.closed) as { count: number; amount: Prisma.Decimal } | undefined;
+
+  const projectedActive = activeObj
+    ? {
+        count: activeObj.count,
+        amount: projectMonetaryDecimal(activeObj.amount, mode),
+      }
+    : undefined;
+
+  const projectedOverdue = overdueObj
+    ? {
+        count: overdueObj.count,
+        amount: projectMonetaryDecimal(overdueObj.amount, mode),
+      }
+    : undefined;
+
+  const projectedClosed = closedObj
+    ? {
+        count: closedObj.count,
+        amount: projectMonetaryDecimal(closedObj.amount, mode),
+      }
+    : undefined;
+
   const loanStatusSummary = lss && typeof lss === "object"
     ? {
-        ACTIVE: lss.ACTIVE && typeof lss.ACTIVE === "object"
-          ? {
-              count: (lss.ACTIVE as { count: number }).count,
-              amount: projectMonetaryDecimal((lss.ACTIVE as { amount: Prisma.Decimal }).amount, mode),
-            }
-          : undefined,
-        OVERDUE: lss.OVERDUE && typeof lss.OVERDUE === "object"
-          ? {
-              count: (lss.OVERDUE as { count: number }).count,
-              amount: projectMonetaryDecimal((lss.OVERDUE as { amount: Prisma.Decimal }).amount, mode),
-            }
-          : undefined,
-        CLOSED: lss.CLOSED && typeof lss.CLOSED === "object"
-          ? {
-              count: (lss.CLOSED as { count: number }).count,
-              amount: projectMonetaryDecimal((lss.CLOSED as { amount: Prisma.Decimal }).amount, mode),
-            }
-          : undefined,
+        ACTIVE: projectedActive,
+        OVERDUE: projectedOverdue,
+        CLOSED: projectedClosed,
+        active: projectedActive,
+        overdue: projectedOverdue,
+        closed: projectedClosed,
       }
     : stats.loanStatusSummary;
 
@@ -380,6 +411,8 @@ export function projectDashboardStats<T extends GenericRecord>(
     ...stats,
     totalAUM: projectMonetaryString(stats.totalAUM as string, mode),
     totalPrincipalOutstanding: projectDecimalOrString(stats.totalPrincipalOutstanding),
+    capitalMain: stats.capitalMain ? projectDecimalOrString(stats.capitalMain) : undefined,
+    availableCapital: stats.availableCapital ? projectDecimalOrString(stats.availableCapital) : undefined,
     totalAccruedInterest: projectDecimalOrString(stats.totalAccruedInterest),
     totalExposure: projectDecimalOrString(stats.totalExposure),
     totalActivePrincipal: stats.totalActivePrincipal ? projectDecimalOrString(stats.totalActivePrincipal) : undefined,

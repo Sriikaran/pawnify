@@ -44,7 +44,7 @@ interface DocumentUploaderProps {
 }
 
 export function DocumentUploader({
-  label = "Upload KYC, Collateral Photos, or Documents to Supabase Bucket",
+  label = "Upload KYC, Collateral Photos, or Documents",
   bucket = "pawnify-docs",
   onUploadComplete,
   onRemove,
@@ -212,7 +212,7 @@ export function DocumentUploader({
         setWarning(lastWarning);
       }
     } catch (err: unknown) {
-      let message = "Error uploading file to Supabase storage";
+      let message = "Error uploading file to storage";
       if (axios.isAxiosError(err)) {
         message = err.response?.data?.error || err.message;
       } else if (err instanceof Error) {
@@ -247,14 +247,14 @@ export function DocumentUploader({
           {label}
         </label>
         <span
-          className="text-[10px] font-mono uppercase px-2 py-0.5 rounded self-start sm:self-auto"
+          className="text-[10px] font-medium px-2 py-0.5 rounded self-start sm:self-auto"
           style={{
             color: "var(--text-muted)",
             background: "var(--bg-tertiary)",
             border: "1px solid var(--border-primary)",
           }}
         >
-          Supabase Bucket: <strong style={{ color: "var(--accent-text)" }}>{bucket}</strong>
+          Secure document storage
         </span>
       </div>
 
@@ -446,12 +446,12 @@ export function DocumentUploader({
               {uploading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Uploading to {bucket}...
+                  Uploading...
                 </>
               ) : (
                 <>
                   <Upload className="w-4 h-4" />
-                  Uploading to the clouds
+                  Upload Documents
                 </>
               )}
             </button>
@@ -480,7 +480,7 @@ export function DocumentUploader({
         >
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-(--accent)" />
           <div className="space-y-1">
-            <div className="font-bold text-(--accent-text)">Supabase Configuration Notice</div>
+            <div className="font-bold text-(--accent-text)">Storage Notice</div>
             <div style={{ color: "var(--text-secondary)" }}>{warning}</div>
           </div>
         </div>
@@ -566,7 +566,7 @@ export function DocumentUploader({
                           className={`text-[10px] font-mono ${doc.warning ? "text-(--accent)" : ""}`}
                           style={!doc.warning ? { color: "var(--accent-text)" } : undefined}
                         >
-                          {doc.warning ? "Local Fallback" : "Supabase Cloud"}
+                          {doc.warning ? "Local Storage" : "Cloud Storage"}
                         </span>
                       </div>
                     </div>
@@ -712,7 +712,7 @@ export function DocumentUploader({
             style={{ color: "var(--text-muted)" }}
           >
             <span>
-              Bucket: <strong style={{ color: "var(--accent-text)" }}>{bucket}</strong>
+              <strong style={{ color: "var(--accent-text)" }}>Secure attachment</strong>
             </span>
             {previewDoc && (
               <a

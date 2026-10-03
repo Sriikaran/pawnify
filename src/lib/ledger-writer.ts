@@ -33,12 +33,12 @@
  * when the mapping is established by future business decisions.
  */
 
-import { Prisma } from "@prisma/client";
+import { Prisma, TransactionType } from "@prisma/client";
 import { validateAccountForPosting } from "@/lib/services/accounts";
 
 export interface WriteLedgerEntryInput {
   loanId: string;
-  type: "DISBURSEMENT" | "PAYMENT" | "CLOSURE" | "ITEM_RELEASE";
+  type: TransactionType;
   amount: Prisma.Decimal;
   principalAfter: Prisma.Decimal;
   description: string;

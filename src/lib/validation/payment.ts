@@ -8,6 +8,9 @@ export const paymentSchema = z.object({
   loanId: z.string().min(1, "Loan ID is required"),
   amountPaid: z.coerce.number().gt(0, "Payment amount must be greater than 0"),
   mode: z.enum(["CASH", "UPI", "BANK_TRANSFER", "CARD"]),
+  paymentType: z
+    .enum(["FULL", "INTEREST_ONLY", "PRINCIPAL_ONLY", "PART_PAYMENT", "CLOSURE", "EARLY_CLOSURE"])
+    .default("FULL"),
   notes: z.string().max(500).optional().or(z.literal("")),
 });
 

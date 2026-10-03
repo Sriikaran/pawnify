@@ -62,30 +62,61 @@ export function RecordPaymentModal({
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
+  const [paymentType, setPaymentType] = useState<
+    "FULL" | "INTEREST_ONLY" | "PRINCIPAL_ONLY" | "PART_PAYMENT" | "EARLY_CLOSURE"
+  >("FULL");
   const [amountPaid, setAmountPaid] = useState<number>(
-    Math.ceil(accruedInterest + unsettledCharges)
+    Math.ceil(totalDue > 0 ? totalDue : 100)
   );
   const [mode, setMode] = useState<"CASH" | "UPI" | "BANK_TRANSFER" | "CARD">("UPI");
   const [notes, setNotes] = useState("");
 
   const handleOpen = () => {
+    setPaymentType("FULL");
     setAmountPaid(Math.ceil(totalDue > 0 ? totalDue : 100));
     setError(null);
     setSuccessMsg(null);
     setOpen(true);
   };
 
-  const calculatePreview = (paid: number) => {
-    let rem = paid;
-    const allocCharges = Math.min(rem, unsettledCharges);
-    rem -= allocCharges;
-    const allocInterest = Math.min(rem, accruedInterest);
-    rem -= allocInterest;
-    const allocPrincipal = Math.min(rem, principalOutstanding);
-    return { allocCharges, allocInterest, allocPrincipal };
+  const handlePaymentTypeChange = (type: typeof paymentType) => {
+    setPaymentType(type);
+    if (type === "INTEREST_ONLY") {
+      setAmountPaid(Math.ceil(accruedInterest));
+    } else if (type === "PRINCIPAL_ONLY") {
+      setAmountPaid(Math.ceil(principalOutstanding));
+    } else if (type === "EARLY_CLOSURE" || type === "FULL") {
+      setAmountPaid(Math.ceil(totalDue));
+    } else if (type === "PART_PAYMENT") {
+      setAmountPaid(Math.ceil(totalDue * 0.5));
+    }
   };
 
-  const preview = calculatePreview(amountPaid || 0);
+  const calculatePreview = (paid: number, type: typeof paymentType) => {
+    let allocCharges = 0;
+    let allocInterest = 0;
+    let allocPrincipal = 0;
+    let rem = paid;
+
+    if (type === "INTEREST_ONLY") {
+      allocInterest = Math.min(rem, accruedInterest);
+    } else if (type === "PRINCIPAL_ONLY") {
+      allocPrincipal = Math.min(rem, principalOutstanding);
+    } else {
+      allocCharges = Math.min(rem, unsettledCharges);
+      rem -= allocCharges;
+      allocInterest = Math.min(rem, accruedInterest);
+      rem -= allocInterest;
+      allocPrincipal = Math.min(rem, principalOutstanding);
+    }
+
+    const remainingPrincipal = Math.max(0, principalOutstanding - allocPrincipal);
+    const remainingInterest = Math.max(0, accruedInterest - allocInterest);
+
+    return { allocCharges, allocInterest, allocPrincipal, remainingPrincipal, remainingInterest };
+  };
+
+  const preview = calculatePreview(amountPaid || 0, paymentType);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -95,7 +126,13 @@ export function RecordPaymentModal({
     }
     setError(null);
 
-    const res = await recordPayment({ loanId, amountPaid, mode, notes });
+    const res = await recordPayment({
+      loanId,
+      amountPaid,
+      mode,
+      paymentType,
+      notes,
+    });
 
     if ("error" in res) {
       setError((res.error as { message?: string })?.message || "Payment recording failed");
@@ -180,6 +217,33 @@ export function RecordPaymentModal({
             </div>
           </div>
 
+          {/* Payment Type Selector */}
+          <div className="space-y-1.5">
+            <Label>Payment Type *</Label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+              {[
+                { type: "FULL", label: "Full / Normal" },
+                { type: "INTEREST_ONLY", label: "Interest Only" },
+                { type: "PRINCIPAL_ONLY", label: "Principal Only" },
+                { type: "PART_PAYMENT", label: "Part Payment" },
+                { type: "EARLY_CLOSURE", label: "Early Closure" },
+              ].map((item) => (
+                <button
+                  key={item.type}
+                  type="button"
+                  onClick={() => handlePaymentTypeChange(item.type as typeof paymentType)}
+                  className={`text-xs p-2 rounded-lg border text-center transition-all cursor-pointer ${
+                    paymentType === item.type
+                      ? "bg-(--accent-bg) text-(--accent) border-(--accent-border) font-bold"
+                      : "bg-(--bg-tertiary) text-(--text-secondary) border-(--border-primary) hover:bg-(--bg-card)"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <div className="flex justify-between items-center">
@@ -229,10 +293,10 @@ export function RecordPaymentModal({
             </div>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-(--bg-tertiary) border border-(--border-primary) space-y-1.5 text-xs">
+          <div className="p-3.5 rounded-xl bg-(--bg-tertiary) border border-(--border-primary) space-y-2 text-xs">
             <div className="text-[11px] font-semibold text-(--text-secondary) uppercase tracking-wider flex items-center gap-1.5 mb-1">
               <TrendingDown className="w-3.5 h-3.5 text-(--accent)" />
-              Atomic Waterfall Allocation Preview (§6.4)
+              Allocation Waterfall Preview
             </div>
             <div className="grid grid-cols-3 gap-2 pt-1 text-center font-mono">
               <div className="p-2 rounded bg-(--bg-card) border border-(--border-primary)">
@@ -253,6 +317,16 @@ export function RecordPaymentModal({
                   {formatINR(preview.allocPrincipal)}
                 </div>
               </div>
+            </div>
+            <div className="flex justify-between items-center pt-2 border-t border-(--border-primary) text-[11px] font-mono text-(--text-secondary)">
+              <span>
+                Remaining Principal:{" "}
+                <b className="text-(--text-primary)">{formatINR(preview.remainingPrincipal)}</b>
+              </span>
+              <span>
+                Remaining Interest:{" "}
+                <b className="text-(--text-primary)">{formatINR(preview.remainingInterest)}</b>
+              </span>
             </div>
           </div>
 

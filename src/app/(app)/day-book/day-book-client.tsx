@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useTransition } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
 import {
   BookOpen,
@@ -10,6 +10,7 @@ import {
   ArrowUpRight,
   Minus,
   Calendar,
+  CalendarRange,
   Filter,
   RefreshCw,
   Loader2,
@@ -100,11 +101,21 @@ const getYesterdayStr = () => {
 };
 
 export function DayBookClient() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const initialAccountId = searchParams.get("accountId") || "ALL";
   const initialDate = searchParams.get("date") || getTodayStr();
 
+  // Filter mode: "single" = today/yesterday/date picker, "range" = from+to pickers
+  const [filterMode, setFilterMode] = useState<"single" | "range">("single");
+
+  // Single-date state
   const [date, setDate] = useState(initialDate);
+
+  // Range state
+  const [fromDate, setFromDate] = useState(getTodayStr());
+  const [toDate, setToDate] = useState(getTodayStr());
+
   const [eventType, setEventType] = useState<"ALL" | "PAYMENT" | "DISBURSEMENT" | "CLOSURE" | "ITEM_RELEASE">("ALL");
   const [accountId, setAccountId] = useState(initialAccountId);
 
@@ -112,6 +123,8 @@ export function DayBookClient() {
   const [summary, setSummary] = useState<DayBookSummary | null>(null);
   const [accounts, setAccounts] = useState<FilterAccount[]>([]);
   const [calcMode, setCalcMode] = useState<string>("NORMAL");
+  /** Label shown in the journal header */
+  const [dateLabel, setDateLabel] = useState(initialDate);
 
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -130,32 +143,57 @@ export function DayBookClient() {
   }, []);
 
   const loadData = useCallback(() => {
+    // Client-side range validation
+    if (filterMode === "range") {
+      if (!fromDate || !toDate) {
+        setError("Please select both a From date and a To date.");
+        return;
+      }
+      if (fromDate > toDate) {
+        setError("From date cannot be after To date. Please fix the date range.");
+        return;
+      }
+    }
+
     startTransition(async () => {
       setError(null);
       try {
-        const res = await getDayBookAction({
-          date,
-          eventType: eventType === "ALL" ? undefined : eventType,
-          accountId: accountId === "ALL" ? undefined : accountId,
-          sortOrder: "asc",
-        });
+        const filter =
+          filterMode === "range"
+            ? {
+                startDate: fromDate,
+                endDate: toDate,
+                eventType: eventType === "ALL" ? undefined : eventType,
+                accountId: accountId === "ALL" ? undefined : accountId,
+                sortOrder: "asc" as const,
+              }
+            : {
+                date,
+                eventType: eventType === "ALL" ? undefined : eventType,
+                accountId: accountId === "ALL" ? undefined : accountId,
+                sortOrder: "asc" as const,
+              };
+
+        const res = await getDayBookAction(filter);
 
         setEntries((res.entries as unknown as DayBookEntry[]) || []);
         setSummary((res.summary as unknown as DayBookSummary) || null);
         setCalcMode(res.calculationMode);
+        setDateLabel(res.date as string);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Failed to load Day Book data";
         setError(msg);
       }
     });
-  }, [date, eventType, accountId]);
+  }, [filterMode, date, fromDate, toDate, eventType, accountId]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData();
   }, [loadData]);
 
-  const isToday = date === getTodayStr();
-  const isYesterday = date === getYesterdayStr();
+  const isToday = filterMode === "single" && date === getTodayStr();
+  const isYesterday = filterMode === "single" && date === getYesterdayStr();
 
   return (
     <div className="space-y-6">
@@ -194,36 +232,82 @@ export function DayBookClient() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           {/* Date Selector */}
           <div className="flex flex-wrap items-center gap-2">
+            {/* Mode label */}
             <span className="text-xs font-bold uppercase tracking-wider text-(--text-muted) flex items-center gap-1.5">
               <Calendar className="w-3.5 h-3.5" />
               Date:
             </span>
+
+            {/* Single-date shortcuts */}
+            {filterMode === "single" && (
+              <>
+                <button
+                  onClick={() => setDate(getTodayStr())}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                    isToday
+                      ? "bg-[#B38646] text-white shadow-xs"
+                      : "bg-(--bg-secondary) text-(--text-secondary) hover:text-(--text-primary) border border-(--border-primary)"
+                  }`}
+                >
+                  Today
+                </button>
+                <button
+                  onClick={() => setDate(getYesterdayStr())}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                    isYesterday
+                      ? "bg-[#B38646] text-white shadow-xs"
+                      : "bg-(--bg-secondary) text-(--text-secondary) hover:text-(--text-primary) border border-(--border-primary)"
+                  }`}
+                >
+                  Yesterday
+                </button>
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-(--bg-tertiary) border border-(--border-primary) text-(--text-primary) focus:outline-none focus:border-(--accent)"
+                />
+              </>
+            )}
+
+            {/* Date-range pickers */}
+            {filterMode === "range" && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <label className="text-xs font-semibold text-(--text-muted)">From</label>
+                <input
+                  type="date"
+                  value={fromDate}
+                  max={toDate || undefined}
+                  onChange={(e) => setFromDate(e.target.value)}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-(--bg-tertiary) border border-(--border-primary) text-(--text-primary) focus:outline-none focus:border-(--accent)"
+                />
+                <label className="text-xs font-semibold text-(--text-muted)">To</label>
+                <input
+                  type="date"
+                  value={toDate}
+                  min={fromDate || undefined}
+                  onChange={(e) => setToDate(e.target.value)}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-(--bg-tertiary) border border-(--border-primary) text-(--text-primary) focus:outline-none focus:border-(--accent)"
+                />
+              </div>
+            )}
+
+            {/* Mode toggle */}
             <button
-              onClick={() => setDate(getTodayStr())}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                isToday
-                  ? "bg-[#B38646] text-white shadow-xs"
-                  : "bg-(--bg-secondary) text-(--text-secondary) hover:text-(--text-primary) border border-(--border-primary)"
+              onClick={() => {
+                setFilterMode((prev) => (prev === "single" ? "range" : "single"));
+                setError(null);
+              }}
+              title={filterMode === "single" ? "Switch to Date Range" : "Switch to Single Date"}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer border ${
+                filterMode === "range"
+                  ? "bg-[#B38646]/15 text-[#B38646] border-[#B38646]/40"
+                  : "bg-(--bg-secondary) text-(--text-secondary) hover:text-(--text-primary) border-(--border-primary)"
               }`}
             >
-              Today
+              <CalendarRange className="w-3.5 h-3.5" />
+              Date Range
             </button>
-            <button
-              onClick={() => setDate(getYesterdayStr())}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                isYesterday
-                  ? "bg-[#B38646] text-white shadow-xs"
-                  : "bg-(--bg-secondary) text-(--text-secondary) hover:text-(--text-primary) border border-(--border-primary)"
-              }`}
-            >
-              Yesterday
-            </button>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-(--bg-tertiary) border border-(--border-primary) text-(--text-primary) focus:outline-none focus:border-(--accent)"
-            />
           </div>
 
           {/* Filters: Event Type & Account */}
@@ -255,16 +339,27 @@ export function DayBookClient() {
               </span>
               <select
                 value={accountId}
-                onChange={(e) => setAccountId(e.target.value)}
+                onChange={(e) => {
+                  if (e.target.value === "ADD_NEW_ACCOUNT") {
+                    router.push("/admin/accounts?addAccount=true");
+                    return;
+                  }
+                  setAccountId(e.target.value);
+                }}
                 className="px-3 py-1.5 text-xs font-medium rounded-xl bg-(--bg-tertiary) border border-(--border-primary) text-(--text-primary) focus:outline-none focus:border-(--accent) max-w-[200px]"
               >
                 <option value="ALL">All Accounts</option>
                 <option value="UNASSIGNED">Unassigned / Legacy</option>
+                <option disabled value="">──────────────</option>
                 {accounts.map((acc) => (
                   <option key={acc.id} value={acc.id}>
                     [{acc.code}] {acc.name}
                   </option>
                 ))}
+                <option disabled value="">──────────────</option>
+                <option value="ADD_NEW_ACCOUNT" className="font-semibold text-[#B38646]">
+                  + Add New Account
+                </option>
               </select>
             </div>
           </div>
@@ -410,9 +505,19 @@ export function DayBookClient() {
             </h3>
           </div>
           <span className="text-xs text-(--text-muted)">
-            Date: <b className="text-(--text-secondary)">{date}</b>
-          </span>
-        </div>
+              {filterMode === "range" ? (
+                <>
+                  Range:{" "}
+                  <b className="text-(--text-secondary)">{dateLabel}</b>
+                </>
+              ) : (
+                <>
+                  Date:{" "}
+                  <b className="text-(--text-secondary)">{dateLabel}</b>
+                </>
+              )}
+            </span>
+          </div>
 
         {isPending ? (
           <div className="flex flex-col items-center justify-center py-24 gap-3">
