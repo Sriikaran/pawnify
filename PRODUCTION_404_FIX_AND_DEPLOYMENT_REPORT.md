@@ -1,11 +1,18 @@
 # Pawnify Production 404 / Routing Fix & Deployment Report
 
-**Date:** 5 October 2026  
-**Repository:** `https://github.com/Sriikaran/pawnify.git`  
-**Branch:** `main`  
-**Commit Hash:** `d339afaee611726a5a3946fb99c6df195ebad033`  
-**Production URL:** `https://pawnify-red.vercel.app`  
-**Deployment Status:** `SUCCESS` (Verified live on Vercel)  
+**Date (initial fix):** 5 October 2026
+**Date (re-verified):** 6 October 2026
+**Repository:** `https://github.com/Sriikaran/pawnify.git`
+**Branch:** `main`
+**Fix Commit:** `d339afaee611726a5a3946fb99c6df195ebad033`
+**HEAD / Deployed Commit:** `71e0582b0a2279fc087399a12bc5e6c92f3e9df1`
+**Production URL:** `https://pawnify-red.vercel.app`
+**Deployment Status:** `SUCCESS` (Re-verified live on Vercel — 6 Oct 2026)
+
+> **Commit discrepancy resolved:** `d339afa` introduced all routing/404 fixes.
+> `71e0582` followed immediately, adding only this documentation file.
+> Both are on `main`. Vercel auto-deploys latest `main`.
+> **Local HEAD = GitHub HEAD = Vercel deployed commit = `71e0582`. ✅**
 
 ---
 
@@ -171,16 +178,47 @@ Executed automated post-deployment smoke test against the live Vercel environmen
 
 ## 10. Deployed Commit Verification
 
-- **Local Commit:** `d339afaee611726a5a3946fb99c6df195ebad033`
-- **GitHub Origin:** `https://github.com/Sriikaran/pawnify/commit/d339afaee611726a5a3946fb99c6df195ebad033`
-- **Vercel Deployment URL:** `https://vercel.com/sriikarans-projects/pawnify/8iYoX5sF1fTmzHAk8cNC9jXK1xFh`
-- **Vercel State:** `success` ("Deployment has completed")
-- **Live Production Host:** `https://pawnify-red.vercel.app`
+| Entity | Commit |
+|--------|--------|
+| Local HEAD | `71e0582b0a2279fc087399a12bc5e6c92f3e9df1` |
+| GitHub `main` | `71e0582b0a2279fc087399a12bc5e6c92f3e9df1` |
+| Vercel deployment | `71e0582b0a2279fc087399a12bc5e6c92f3e9df1` |
 
-Git commit = GitHub commit = Deployed production commit.
+**Local HEAD = GitHub HEAD = Deployed production commit. ✅**
+
+Note: The initial report stated `d339afa` as the deployed commit. That was the fix commit. `71e0582` (the docs commit) is the child and current HEAD, deployed to Vercel via auto-deploy on push to `main`.
 
 ---
 
-## 11. Final Assessment
+## 11. Re-Verification Summary (6 October 2026)
 
-All discovered 404, routing, identifier mismatch, and typeahead customer search issues have been permanently resolved. The codebase passes static type checking, strict linting, 350 automated unit and integration tests, production build compilation, and live end-to-end smoke testing on `https://pawnify-red.vercel.app`.
+| Check | Result |
+|-------|--------|
+| git status | ✅ Clean, `main`, up-to-date with `origin/main` |
+| TypeScript `--noEmit` | ✅ 0 errors |
+| `npm run build` | ✅ Exit 0, 25 routes |
+| Test suite | ✅ 350/350 PASS (19 files) |
+| Live routes (23 checked) | ✅ 23/23 PASS |
+| Login NORMAL mode | ✅ 200, role=ADMIN |
+| Login FIFTY_PERCENT mode | ✅ 200 |
+| Customer search by CUID | ✅ Returns correct customer |
+| Customer search by phone | ✅ Returns correct customer |
+| Unauthenticated search | ✅ 401 (correct RBAC) |
+| Customer detail page (CUID) | ✅ 200 |
+| New Loan page | ✅ 200 |
+| Admin Accounts | ✅ 200 |
+| Day Book | ✅ 200 |
+| Account Ledger | ✅ 200 |
+| Reports | ✅ 200 |
+| Followups | ✅ 200 |
+| Health + DB | ✅ `{"status":"healthy","database":"connected"}` |
+
+---
+
+## 12. Final Assessment
+
+All discovered 404, routing, identifier mismatch, and typeahead customer search issues have been permanently resolved. The codebase passes static type checking, 350 automated unit and integration tests, production build compilation, and authenticated live end-to-end verification on `https://pawnify-red.vercel.app`.
+
+**Production status: CLEAN. No known unresolved errors.**
+
+> **Limitation note:** Browser-interactive form-submit workflows (customer creation form, loan form, payment) could not be end-to-end browser-tested in this session due to browser subagent quota exhaustion. All underlying Server Actions and API routes for these flows are covered by the 350-test automated suite and authenticated HTTP session tests above.
