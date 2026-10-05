@@ -178,6 +178,7 @@ export async function getDashboardStats(filter?: DashboardFilter) {
       include: {
         loan: {
           select: {
+            id: true,
             loanNumber: true,
             customer: { select: { id: true, fullName: true, phone: true } },
           },
@@ -270,6 +271,7 @@ export async function getDashboardStats(filter?: DashboardFilter) {
     flow: classifyFlow(e.type),
     amount: e.amount,
     principalAfter: e.principalAfter,
+    loanId: e.loan.id,
     loanNumber: e.loan.loanNumber,
     customerName: e.loan.customer.fullName,
     customerPhone: e.loan.customer.phone,

@@ -12,6 +12,26 @@ const nextConfig: NextConfig = {
         destination: "/admin/accounts",
         permanent: false,
       },
+      {
+        source: "/daybook",
+        destination: "/day-book",
+        permanent: false,
+      },
+      {
+        source: "/ledger",
+        destination: "/account-ledger",
+        permanent: false,
+      },
+      {
+        source: "/staff",
+        destination: "/admin/staff",
+        permanent: false,
+      },
+      {
+        source: "/settings",
+        destination: "/admin/settings",
+        permanent: false,
+      },
     ];
   },
 };

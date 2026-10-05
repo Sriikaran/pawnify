@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/auth/session";
 import { CustomerDetailClient } from "./customer-detail-client";
 
@@ -13,6 +14,10 @@ interface PageProps {
 
 export default async function CustomerDetailPage({ params }: PageProps) {
   const resolvedParams = await params;
+  if (resolvedParams.id === "new") {
+    redirect("/customers/new");
+  }
+
   const session = await requireSession();
   const isAdmin = (session.user as unknown as { role: string }).role === "ADMIN";
 

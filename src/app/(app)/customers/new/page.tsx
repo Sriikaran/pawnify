@@ -45,17 +45,34 @@ export default function NewCustomerPage() {
     e.preventDefault();
     setError(null);
 
-    if (!/^[6-9]\d{9}$/.test(formData.phone)) {
+    const normalizedPhone = formData.phone.replace(/\D/g, "").slice(-10);
+    if (!/^[6-9]\d{9}$/.test(normalizedPhone)) {
       setError("Please enter a valid 10-digit Indian mobile number starting with 6-9");
       return;
     }
 
-    const res = await createCustomer(formData);
+    const payload = {
+      ...formData,
+      fullName: formData.fullName.trim(),
+      phone: normalizedPhone,
+      email: formData.email.trim() || undefined,
+      addressLine1: formData.addressLine1.trim(),
+      addressLine2: formData.addressLine2.trim() || undefined,
+      city: formData.city.trim(),
+      state: formData.state.trim(),
+      pincode: formData.pincode.trim(),
+    };
+
+    const res = await createCustomer(payload);
 
     if ("error" in res) {
       setError((res.error as { message?: string })?.message || "Failed to create customer");
-    } else {
+    } else if (res.data?.customerId) {
       router.push(`/customers/${res.data.customerId}`);
+    } else if (res.data?.success) {
+      router.push("/customers");
+    } else {
+      setError("Failed to create customer. Please try again.");
     }
   };
 

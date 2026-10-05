@@ -5,6 +5,8 @@ import { checkAuth } from "@/lib/auth/session";
 import { createCustomer } from "@/lib/services/customers";
 import { customerCreateSchema } from "@/lib/validation/customer";
 
+import { Prisma } from "@prisma/client";
+
 export async function createCustomerAction(formData: unknown) {
   const auth = await checkAuth();
   if (!auth.authenticated || !auth.user) {
@@ -40,6 +42,12 @@ export async function createCustomerAction(formData: unknown) {
     return { success: true, customerId: customer.id };
   } catch (err: unknown) {
     console.error("Failed to create customer:", err);
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      return {
+        success: false,
+        error: "A customer with this mobile number already exists.",
+      };
+    }
     return {
       success: false,
       error: err instanceof Error ? err.message : "Failed to create customer",

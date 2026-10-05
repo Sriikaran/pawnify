@@ -99,8 +99,12 @@ export async function getCustomers(filters: CustomerFilters = {}) {
 }
 
 export async function getCustomerById(id: string) {
-  return await prisma.customer.findUnique({
-    where: { id },
+  if (!id || id === "undefined" || id === "null") return null;
+
+  return await prisma.customer.findFirst({
+    where: {
+      OR: [{ id }, { phone: id }],
+    },
     include: {
       kycDocuments: true,
       createdBy: { select: { id: true, name: true } },
@@ -130,7 +134,11 @@ export async function searchCustomers(query: string, limit = 10) {
 
   return await prisma.customer.findMany({
     where: {
-      OR: [{ fullName: { contains: query, mode: "insensitive" } }, { phone: { contains: query } }],
+      OR: [
+        { id: query },
+        { fullName: { contains: query, mode: "insensitive" } },
+        { phone: { contains: query } },
+      ],
     },
     select: {
       id: true,

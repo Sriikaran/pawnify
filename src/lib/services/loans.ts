@@ -234,8 +234,12 @@ export async function createLoan(input: CreateLoanInput) {
 // ==================== Loan Queries ====================
 
 export async function getLoanById(id: string) {
-  const loan = await prisma.loan.findUnique({
-    where: { id },
+  if (!id || id === "undefined" || id === "null") return null;
+
+  const loan = await prisma.loan.findFirst({
+    where: {
+      OR: [{ id }, { loanNumber: id }],
+    },
     include: {
       customer: true,
       handledBy: { select: { id: true, name: true, email: true } },
@@ -244,12 +248,14 @@ export async function getLoanById(id: string) {
 
   if (!loan) return null;
 
+  const actualLoanId = loan.id;
+
   const [items, payments, charges, transactions, followUps] = await Promise.all([
-    prisma.loanItem.findMany({ where: { loanId: id }, orderBy: { createdAt: "asc" } }),
-    prisma.payment.findMany({ where: { loanId: id }, orderBy: { createdAt: "desc" } }),
-    prisma.loanCharge.findMany({ where: { loanId: id }, orderBy: { createdAt: "asc" } }),
-    prisma.ledgerEntry.findMany({ where: { loanId: id }, orderBy: { createdAt: "asc" } }),
-    prisma.followUp.findMany({ where: { loanId: id }, orderBy: { dueDate: "asc" } }),
+    prisma.loanItem.findMany({ where: { loanId: actualLoanId }, orderBy: { createdAt: "asc" } }),
+    prisma.payment.findMany({ where: { loanId: actualLoanId }, orderBy: { createdAt: "desc" } }),
+    prisma.loanCharge.findMany({ where: { loanId: actualLoanId }, orderBy: { createdAt: "asc" } }),
+    prisma.ledgerEntry.findMany({ where: { loanId: actualLoanId }, orderBy: { createdAt: "asc" } }),
+    prisma.followUp.findMany({ where: { loanId: actualLoanId }, orderBy: { dueDate: "asc" } }),
   ]);
 
   const fullLoan = {

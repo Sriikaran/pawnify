@@ -864,7 +864,7 @@ export function DashboardClient() {
                       </td>
                       <td className="font-mono text-xs font-medium">
                         <Link
-                          href={`/loans/${act.loanNumber}`}
+                          href={`/loans/${act.loanId || act.loanNumber}`}
                           className="hover:underline font-bold"
                           style={{ color: "var(--accent-text)" }}
                         >
